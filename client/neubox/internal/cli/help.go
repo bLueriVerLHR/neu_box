@@ -20,7 +20,8 @@ func (a *app) printHelpTo(writer io.Writer) {
     neubox [--json] docker run <docker 参数...>
     neubox [--json] docker start <容器> [docker 参数...]
     neubox [--json] {list|status|check|join|result} [参数]
-    neubox [--json] tasks [--all] [--since 4h]
+    neubox [--json] tasks [--all | --since 4h] [--no-command]
+    neubox [--json] tasks [--task-id ID] [--health | --watch]
     neubox wait <task_id> [--interval 2s] [--timeout 0]
 
 全局选项:
@@ -78,6 +79,14 @@ submit 选项:
                                  结束的任务（宁少勿刷屏）
     tasks --all                  显示 worker 返回的全部任务
     tasks --since 4h             自定义时间窗（30m / 6h / 12h 均可）
+    tasks -u USER --status running -k 10
+                                 按用户、状态和条数筛选
+    tasks --command REGEX        按命令正则筛选
+    tasks --no-command           隐藏任务命令
+    tasks --health               查看结果与日志末尾
+    tasks --task-id ID --watch   等待指定任务结束，可重复指定 ID（别名 --hash）
+                                 --seconds 3600 --interval 15（单位为秒）
+    tasks --color / --no-color   强制启用或关闭终端颜色
     result <task_id>             查看任务输出和结果
     wait <task_id>               跟踪增量日志并等待任务结束
     version                      显示客户端版本

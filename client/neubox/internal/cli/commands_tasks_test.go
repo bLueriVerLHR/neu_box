@@ -219,3 +219,76 @@ func TestTasksBadSinceRejected(t *testing.T) {
 		t.Fatalf("missing since error: %s", errOut.String())
 	}
 }
+
+func TestTasksFiltersBeforeHidingCommand(t *testing.T) {
+	application, out, errOut := testApplication(tasksQueueServer(t).URL)
+	args := []string{"tasks", "-u", "yuxd", "--status", "completed", "--command", "^echo ", "-k", "1", "--no-command"}
+	if code := application.run(args); code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, errOut.String())
+	}
+	if got := out.String(); !strings.Contains(got, "ok-1") || strings.Contains(got, "command:") || strings.Contains(got, "notime-1") {
+		t.Fatalf("unexpected task list: %s", got)
+	}
+
+	out.Reset()
+	if code := application.run(append([]string{"--json"}, args...)); code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, errOut.String())
+	}
+	var output struct {
+		Queue []map[string]any `json:"queue"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &output); err != nil {
+		t.Fatal(err)
+	}
+	if len(output.Queue) != 1 || output.Queue[0]["task_id"] != "ok-1" {
+		t.Fatalf("unexpected queue: %v", output.Queue)
+	}
+	if _, ok := output.Queue[0]["command"]; ok {
+		t.Fatalf("command was present: %v", output.Queue)
+	}
+}
+
+func TestTasksWatch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/tasks/ok/log", "/tasks/bad/log", "/tasks/active/log":
+			if query := request.URL.Query(); query.Get("tail") != "1500" || query.Get("raw") != "1" {
+				t.Errorf("unexpected log query: %v", query)
+			}
+			_, _ = io.WriteString(writer, "recent log\n")
+		case "/tasks/active":
+			writeJSON(t, writer, http.StatusOK, map[string]any{"task_id": "active", "status": "running"})
+		case "/tasks/ok", "/tasks/bad":
+			id := strings.TrimPrefix(request.URL.Path, "/tasks/")
+			rc := 0
+			if id == "bad" {
+				rc = 1
+			}
+			writeJSON(t, writer, http.StatusOK, map[string]any{
+				"task_id": id, "status": "completed", "result": map[string]any{"returncode": rc},
+			})
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	for _, test := range []struct {
+		args []string
+		code int
+	}{
+		{[]string{"--task-id", "ok", "--watch"}, 0},
+		{[]string{"--hash", "ok", "--task-id", "bad", "--watch"}, 1},
+		{[]string{"--task-id", "bad", "--health"}, 0},
+		{[]string{"--task-id", "active", "--watch", "--seconds", "0.1"}, 124},
+	} {
+		application, out, errOut := testApplication(server.URL)
+		code := application.run(append([]string{"--json", "tasks"}, test.args...))
+		if code != test.code {
+			t.Fatalf("%v exit=%d, want %d (stderr=%s)", test.args, code, test.code, errOut.String())
+		}
+		if code != 124 && !strings.Contains(out.String(), `"log_tail":"recent log\n"`) {
+			t.Fatalf("missing log tail: %s", out.String())
+		}
+	}
+}
